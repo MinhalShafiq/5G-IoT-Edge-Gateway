@@ -1,0 +1,40 @@
+[project]
+name = "batch-analytics"
+version = "0.1.0"
+description = "Batch Analytics service for 5G IoT Edge Gateway — PySpark jobs for historical sensor data analysis"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pyspark>=3.5.0",
+    "numpy>=1.26.0",
+    "sqlalchemy[asyncio]>=2.0.23",
+    "asyncpg>=0.29.0",
+    "pydantic-settings>=2.1.0",
+    "structlog>=23.2.0",
+    "prometheus-client>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.25.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["batch_analytics*"]
+
+[project.scripts]
+batch-analytics = "batch_analytics.main:run"
+
+# Install the shared library as a path dependency:
+#   pip install -e ../../shared
+# Or in pip-tools / Docker:
+#   pip install ../../shared
+[tool.batch-analytics.dependencies-path]
+shared = {path = "../../shared"}

@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option python_generic_services = true;
+
+import "google/protobuf/timestamp.proto";
+
+// Device registration and management messages.
+
+enum DeviceType {
+  DEVICE_TYPE_UNSPECIFIED = 0;
+  TEMPERATURE_SENSOR = 1;
+  VIBRATION_SENSOR = 2;
+  PRESSURE_SENSOR = 3;
+  SMART_METER = 4;
+  GPS_TRACKER = 5;
+}
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  REGISTERED = 1;
+  PROVISIONED = 2;
+  ACTIVE = 3;
+  INACTIVE = 4;
+  DECOMMISSIONED = 5;
+}
+
+message Device {
+  string id = 1;
+  string name = 2;
+  DeviceType device_type = 3;
+  DeviceStatus status = 4;
+  string firmware_version = 5;
+  google.protobuf.Timestamp last_seen_at = 6;
+  map<string, string> metadata = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message RegisterDeviceRequest {
+  string name = 1;
+  DeviceType device_type = 2;
+  string firmware_version = 3;
+  map<string, string> metadata = 4;
+}
+
+message RegisterDeviceResponse {
+  Device device = 1;
+}
+
+message GetDeviceRequest {
+  string device_id = 1;
+}
+
+message GetDeviceResponse {
+  Device device = 1;
+}
+
+message ListDevicesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  DeviceType device_type_filter = 3;
+  DeviceStatus status_filter = 4;
+}
+
+message ListDevicesResponse {
+  repeated Device devices = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message UpdateDeviceStatusRequest {
+  string device_id = 1;
+  DeviceStatus status = 2;
+}
+
+message UpdateDeviceStatusResponse {
+  Device device = 1;
+}
+
+// Device Management Service
+service DeviceService {
+  rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
+  rpc GetDevice(GetDeviceRequest) returns (GetDeviceResponse);
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc UpdateDeviceStatus(UpdateDeviceStatusRequest) returns (UpdateDeviceStatusResponse);
+}

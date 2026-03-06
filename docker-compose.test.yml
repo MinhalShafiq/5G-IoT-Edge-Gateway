@@ -1,0 +1,28 @@
+version: "3.9"
+
+# Test stack — spins up infrastructure for integration tests.
+# Usage: docker-compose -f docker-compose.test.yml up -d
+
+services:
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly no --maxmemory 64mb
+
+  postgres-test:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: iot_gateway
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: iot_gateway_test
+    tmpfs:
+      - /var/lib/postgresql/data  # RAM-backed for speed
+
+  mosquitto-test:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1884:1883"
+    command: mosquitto -c /dev/null -p 1883 -v

@@ -1,0 +1,20 @@
+[project]
+name = "shared"
+version = "0.1.0"
+description = "Shared library for IoT Edge Gateway services"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "sqlalchemy[asyncio]>=2.0.23",
+    "asyncpg>=0.29.0",
+    "redis>=5.0.0",
+    "structlog>=23.2.0",
+    "prometheus-client>=0.19.0",
+    "PyJWT>=2.8.0",
+    "cryptography>=41.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,100 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Telemetry Ingestion Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(telemetry_received_total[5m])",
+          "legendFormat": "{{device_type}} ({{protocol}})"
+        }
+      ]
+    },
+    {
+      "title": "Active Devices",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(active_devices)",
+          "legendFormat": "Total"
+        }
+      ]
+    },
+    {
+      "title": "Anomalies Detected",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(increase(anomalies_detected_total[1h]))",
+          "legendFormat": "Last Hour"
+        }
+      ]
+    },
+    {
+      "title": "Processing Latency (p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(processing_latency_seconds_bucket[5m]))",
+          "legendFormat": "{{service}} - {{operation}}"
+        }
+      ]
+    },
+    {
+      "title": "ML Inference Latency (p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(inference_latency_seconds_bucket[5m]))",
+          "legendFormat": "{{model_name}}"
+        }
+      ]
+    },
+    {
+      "title": "Redis Stream Lengths",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "stream_messages_published_total - stream_messages_consumed_total",
+          "legendFormat": "{{stream}} backlog"
+        }
+      ]
+    },
+    {
+      "title": "Stream Throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(stream_messages_published_total[5m])",
+          "legendFormat": "Published {{stream}}"
+        },
+        {
+          "expr": "rate(stream_messages_consumed_total[5m])",
+          "legendFormat": "Consumed {{stream}} ({{consumer_group}})"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["iot-gateway", "overview"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "IoT Gateway Overview",
+  "uid": "iot-gateway-overview"
+}

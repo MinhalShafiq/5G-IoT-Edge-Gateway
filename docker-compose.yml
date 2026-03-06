@@ -1,0 +1,186 @@
+services:
+  # --- Infrastructure ---
+  # These services do NOT expose ports to the host — they are only
+  # reachable by other containers on the Docker network.  This avoids
+  # "address already in use" errors when ports 1883/5432/6379 are
+  # occupied on the host.
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: iot_gateway
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: iot_gateway
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iot_gateway"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -i healthcheck -W 3 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --- Edge Services ---
+
+  data-ingestion:
+    build:
+      context: .
+      dockerfile: services/data-ingestion/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+asyncpg://iot_gateway:changeme@postgres:5432/iot_gateway
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+  data-persistence:
+    build:
+      context: .
+      dockerfile: services/data-persistence/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+asyncpg://iot_gateway:changeme@postgres:5432/iot_gateway
+      LOG_LEVEL: INFO
+      BATCH_SIZE: 50
+      FLUSH_INTERVAL_SECONDS: 5.0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ml-inference:
+    build:
+      context: .
+      dockerfile: services/ml-inference/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      ANOMALY_THRESHOLD: 0.5
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Monitoring ---
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # --- Dashboard (Web UI) ---
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/project:ro
+    environment:
+      PROJECT_ROOT: /project
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # --- Test Runner (run via dashboard or `docker compose run --rm test-runner`) ---
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    environment:
+      ENVIRONMENT: test
+      REDIS_URL: redis://redis:6379/1
+      POSTGRES_DSN: postgresql+asyncpg://iot_gateway:changeme@postgres:5432/iot_gateway
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      JWT_SECRET: test-secret-key
+      LOG_LEVEL: WARNING
+      DATA_INGESTION_URL: http://data-ingestion:8001
+      CLOUD_API_URL: http://cloud-api:8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    profiles:
+      - test
+
+  # --- Simulator (run via dashboard or `docker compose --profile simulate up simulator`) ---
+
+  simulator:
+    build: ./simulator
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      NUM_DEVICES: 10
+      PUBLISH_INTERVAL_SECONDS: 5.0
+      ANOMALY_RATE: 0.05
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    profiles:
+      - simulate
+
+volumes:
+  redis-data:
+  postgres-data:
+  mosquitto-data:
+  mosquitto-log:
+  prometheus-data:
+  grafana-data:

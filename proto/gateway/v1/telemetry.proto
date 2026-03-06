@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option python_generic_services = true;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// Telemetry data messages for sensor readings.
+
+message TelemetryReading {
+  string device_id = 1;
+  string device_type = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  google.protobuf.Struct payload = 4;
+  map<string, string> metadata = 5;
+}
+
+message TelemetryBatch {
+  repeated TelemetryReading readings = 1;
+  string source_gateway_id = 2;
+  google.protobuf.Timestamp batch_timestamp = 3;
+}
+
+message SendTelemetryRequest {
+  TelemetryBatch batch = 1;
+}
+
+message SendTelemetryResponse {
+  int32 accepted_count = 1;
+  int32 rejected_count = 2;
+  repeated string errors = 3;
+}
+
+message StreamTelemetryRequest {
+  TelemetryReading reading = 1;
+}
+
+message StreamTelemetryResponse {
+  bool accepted = 1;
+  string stream_entry_id = 2;
+}
+
+// Telemetry Service for edge-to-cloud data transfer
+service TelemetryService {
+  // Send a batch of telemetry readings
+  rpc SendTelemetry(SendTelemetryRequest) returns (SendTelemetryResponse);
+
+  // Stream telemetry readings in real-time (client streaming)
+  rpc StreamTelemetry(stream StreamTelemetryRequest) returns (StreamTelemetryResponse);
+}

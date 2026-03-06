@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: iot-gateway
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: "default"
+      group_by: ["alertname", "service"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+      routes:
+        - match:
+            severity: critical
+          receiver: "critical"
+          group_wait: 10s
+
+    receivers:
+      - name: "default"
+        # Configure webhook, email, or Slack here
+      - name: "critical"
+        # Configure high-priority alerting channel
+
+    inhibit_rules:
+      - source_match:
+          severity: critical
+        target_match:
+          severity: warning
+        equal: ["alertname", "service"]

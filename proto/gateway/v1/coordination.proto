@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option python_generic_services = true;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// Cluster coordination messages for edge node consensus.
+
+message HeartbeatRequest {
+  string node_id = 1;
+  string node_address = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  NodeStatus status = 4;
+  ResourceMetrics resources = 5;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  string leader_id = 2;
+  uint64 cluster_version = 3;
+}
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  JOINING = 1;
+  ALIVE = 2;
+  SUSPECT = 3;
+  DEAD = 4;
+  LEAVING = 5;
+}
+
+message ResourceMetrics {
+  float cpu_usage_percent = 1;
+  float memory_usage_percent = 2;
+  int64 memory_available_mb = 3;
+  float disk_usage_percent = 4;
+  int32 active_connections = 5;
+  float inference_latency_ms = 6;
+}
+
+message JoinRequest {
+  string node_id = 1;
+  string node_address = 2;
+  repeated string capabilities = 3;
+}
+
+message JoinResponse {
+  bool accepted = 1;
+  string leader_id = 2;
+  repeated ClusterNode members = 3;
+  map<string, string> config = 4;
+}
+
+message ClusterNode {
+  string node_id = 1;
+  string node_address = 2;
+  NodeStatus status = 3;
+  bool is_leader = 4;
+  google.protobuf.Timestamp last_heartbeat = 5;
+}
+
+message ConfigUpdate {
+  string key = 1;
+  string value = 2;
+  uint64 version = 3;
+  string updated_by = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message ConfigAck {
+  string node_id = 1;
+  string key = 2;
+  uint64 version = 3;
+  bool applied = 4;
+}
+
+message ClusterState {
+  string leader_id = 1;
+  repeated ClusterNode members = 2;
+  uint64 cluster_version = 3;
+  map<string, string> config = 4;
+}
+
+message Empty {}
+
+// Coordination Service for edge cluster management
+service CoordinationService {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc JoinCluster(JoinRequest) returns (JoinResponse);
+  rpc LeaveCluster(JoinRequest) returns (Empty);
+  rpc SyncConfig(stream ConfigUpdate) returns (stream ConfigAck);
+  rpc GetClusterState(Empty) returns (ClusterState);
+}

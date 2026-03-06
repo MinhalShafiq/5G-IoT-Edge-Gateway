@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option python_generic_services = true;
+
+import "google/protobuf/timestamp.proto";
+
+// Resource scheduling messages for edge-cloud task placement.
+
+enum TaskPriority {
+  TASK_PRIORITY_UNSPECIFIED = 0;
+  LOW = 1;
+  MEDIUM = 2;
+  HIGH = 3;
+  CRITICAL = 4;
+}
+
+enum PlacementTarget {
+  PLACEMENT_TARGET_UNSPECIFIED = 0;
+  EDGE_LOCAL = 1;
+  EDGE_REMOTE = 2;
+  CLOUD = 3;
+}
+
+message InferenceTask {
+  string task_id = 1;
+  string model_name = 2;
+  string model_version = 3;
+  int32 input_size_bytes = 4;
+  TaskPriority priority = 5;
+  float max_latency_ms = 6;
+  string requesting_node_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message TaskPlacement {
+  string task_id = 1;
+  PlacementTarget target = 2;
+  string target_node_id = 3;
+  string target_endpoint = 4;
+  float estimated_latency_ms = 5;
+  string reason = 6;
+}
+
+message ResourceReport {
+  string node_id = 1;
+  string node_address = 2;
+  float cpu_usage_percent = 3;
+  float memory_usage_percent = 4;
+  float gpu_usage_percent = 5;
+  int32 pending_tasks = 6;
+  float avg_inference_latency_ms = 7;
+  repeated string loaded_models = 8;
+  google.protobuf.Timestamp reported_at = 9;
+}
+
+message SchedulerStatus {
+  int32 total_nodes = 1;
+  int32 healthy_nodes = 2;
+  int32 pending_tasks = 3;
+  int32 running_tasks = 4;
+  map<string, int32> tasks_per_target = 5;
+}
+
+// Scheduling Service for edge-cloud task distribution
+service SchedulingService {
+  // Submit an inference task for placement
+  rpc SubmitTask(InferenceTask) returns (TaskPlacement);
+
+  // Report resource availability from an edge node
+  rpc ReportResources(ResourceReport) returns (Empty);
+
+  // Get scheduler status
+  rpc GetSchedulerStatus(Empty) returns (SchedulerStatus);
+}
+
+message Empty {}

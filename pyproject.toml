@@ -1,0 +1,9 @@
+[project]
+name = "iot-edge-gateway"
+version = "0.1.0"
+description = "5G-based IoT Gateway for Edge ML"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
