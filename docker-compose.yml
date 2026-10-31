@@ -1,3 +1,7 @@
+# Fixed project name: start.sh and the dashboard address containers as
+# iot-edge-gateway-<service>-1 regardless of the checkout folder name.
+name: iot-edge-gateway
+
 services:
   # --- Infrastructure ---
   # These services do NOT expose ports to the host — they are only
@@ -49,6 +53,7 @@ services:
       dockerfile: services/data-ingestion/Dockerfile
     ports:
       - "8001:8001"
+      - "5683:5683/udp"   # CoAP
     environment:
       MQTT_BROKER_HOST: mosquitto
       MQTT_BROKER_PORT: 1883
@@ -70,7 +75,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_DSN: postgresql+asyncpg://iot_gateway:changeme@postgres:5432/iot_gateway
       LOG_LEVEL: INFO
-      BATCH_SIZE: 50
+      BATCH_SIZE: 500
       FLUSH_INTERVAL_SECONDS: 5.0
     depends_on:
       redis:
@@ -152,6 +157,8 @@ services:
       JWT_SECRET: test-secret-key
       LOG_LEVEL: WARNING
       DATA_INGESTION_URL: http://data-ingestion:8001
+      ML_INFERENCE_URL: http://ml-inference:8004
+      COAP_HOST: data-ingestion
       CLOUD_API_URL: http://cloud-api:8080
     depends_on:
       redis:
@@ -166,11 +173,16 @@ services:
   simulator:
     build: ./simulator
     environment:
+      TRANSPORT: ${SIM_TRANSPORT:-mqtt}   # mqtt | coap | rest
       MQTT_BROKER_HOST: mosquitto
       MQTT_BROKER_PORT: 1883
-      NUM_DEVICES: 10
-      PUBLISH_INTERVAL_SECONDS: 5.0
-      ANOMALY_RATE: 0.05
+      COAP_HOST: data-ingestion
+      COAP_PORT: 5683
+      REST_ENDPOINT_HOST: data-ingestion
+      REST_ENDPOINT_PORT: 8001
+      NUM_DEVICES: ${NUM_DEVICES:-10}
+      PUBLISH_INTERVAL_SECONDS: ${PUBLISH_INTERVAL_SECONDS:-5.0}
+      ANOMALY_RATE: ${ANOMALY_RATE:-0.05}
     depends_on:
       mosquitto:
         condition: service_healthy

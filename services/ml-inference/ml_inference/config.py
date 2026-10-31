@@ -1,5 +1,9 @@
 """ML Inference service configuration."""
 
+import socket
+
+from pydantic import Field
+
 from shared.config import BaseServiceSettings
 
 
@@ -13,10 +17,13 @@ class Settings(BaseServiceSettings):
     service_name: str = "ml-inference"
     http_port: int = 8004
     model_dir: str = "/app/model_store"
-    anomaly_threshold: float = 0.7
+    # Scores are calibrated so 0.5 == the model's tuned error threshold.
+    anomaly_threshold: float = 0.5
     consumer_group: str = "ml_inference"
-    consumer_name: str = "inference-worker-1"
-    batch_size: int = 32
+    # Unique per container so replicas can share the consumer group.
+    consumer_name: str = Field(default_factory=socket.gethostname)
+    batch_size: int = 500
+    alerts_stream_max_len: int = 100_000
     model_registry_url: str = "http://cloud-api:8080/api/v1/models"
     feature_window_size: int = 10
 

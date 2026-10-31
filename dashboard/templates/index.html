@@ -24,8 +24,8 @@
 
     /* Layout */
     .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; margin-bottom: 20px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-bottom: 20px; }
 
     /* Cards */
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
@@ -96,7 +96,7 @@
     .feed-item.normal { border-left: 3px solid var(--green); }
     .feed-time { color: var(--text-dim); white-space: nowrap; min-width: 75px; }
     .feed-device { color: var(--cyan); min-width: 90px; }
-    .feed-data { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .feed-data { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .feed-score { font-weight: 600; min-width: 50px; text-align: right; }
     .feed-score.high { color: var(--red); }
     .feed-score.low { color: var(--green); }
@@ -127,11 +127,11 @@
     <div class="stats-row">
       <div class="stat-card">
         <div class="stat-value cyan" id="statTelemetry">0</div>
-        <div class="stat-label">Telemetry Readings</div>
+        <div class="stat-label">Readings in Stream</div>
       </div>
       <div class="stat-card">
         <div class="stat-value red" id="statAlerts">0</div>
-        <div class="stat-label">Anomalies Detected</div>
+        <div class="stat-label">Alerts in Stream</div>
       </div>
       <div class="stat-card">
         <div class="stat-value green" id="statRate">0</div>
@@ -252,8 +252,6 @@
     const API = '';
     let totalReadings = 0;
     let totalAlerts = 0;
-    let rateCounter = 0;
-    let lastRateReset = Date.now();
 
     // ── WebSocket for service status ────────────────────────────────────
     let ws;
@@ -293,15 +291,8 @@
         document.getElementById('statTelemetry').textContent = (data.stream_length || 0).toLocaleString();
         document.getElementById('statAlerts').textContent = (data.alert_count || 0).toLocaleString();
 
-        // Rate calculation
-        rateCounter += (data.readings || []).length;
-        const now = Date.now();
-        if (now - lastRateReset >= 2000) {
-          const rate = (rateCounter / ((now - lastRateReset) / 1000)).toFixed(1);
-          document.getElementById('statRate').textContent = rate;
-          rateCounter = 0;
-          lastRateReset = now;
-        }
+        // Arrival rate, measured server-side from the stream's entries-added counter
+        document.getElementById('statRate').textContent = Math.round(data.rate || 0).toLocaleString();
 
         // Telemetry feed
         if (data.readings && data.readings.length > 0) {
@@ -315,6 +306,8 @@
             const deviceType = r.device_type || '';
             let payload = r.payload || '';
             try { if (typeof payload === 'string') payload = JSON.parse(payload); } catch(e) {}
+            // Stream entries wrap the payload as {"payload": {...}}
+            if (payload && typeof payload === 'object' && payload.payload) payload = payload.payload;
             const payloadStr = typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
 
             const div = document.createElement('div');

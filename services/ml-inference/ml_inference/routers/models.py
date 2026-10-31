@@ -93,6 +93,7 @@ async def reload_model(
 
         # Hot-swap to the new model
         model_manager.hot_swap(engine, new_model_path)
+        request.app.state.feature_extractor.set_stats(engine.metadata["feature_stats"])
 
         info = engine.get_info()
         logger.info(

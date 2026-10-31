@@ -38,7 +38,12 @@ class PressureSensor(BaseDevice):
             device_type="pressure_sensor",
             sampling_interval=sampling_interval,
         )
-        self._current_pressure: float = self._PRESSURE_BASELINE
+        # Start anywhere in the band: clamped Brownian motion settles to a
+        # uniform spread over it, so a fleet started this way looks the same
+        # after 5 minutes or 5 days (and so does the model's training data).
+        self._current_pressure: float = self._PRESSURE_BASELINE + random.uniform(
+            -self._PRESSURE_RANGE, self._PRESSURE_RANGE
+        )
         self._last_flow_rate: float = (self._FLOW_RATE_MIN + self._FLOW_RATE_MAX) / 2.0
 
     # ----- helpers -----

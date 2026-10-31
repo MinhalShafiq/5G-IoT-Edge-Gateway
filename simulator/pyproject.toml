@@ -9,6 +9,7 @@ description = "IoT Device Simulator for the 5G IoT Edge Gateway project"
 requires-python = ">=3.10"
 dependencies = [
     "paho-mqtt>=2.0.0",
+    "aiocoap>=0.4.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "structlog>=23.0.0",

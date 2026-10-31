@@ -17,6 +17,8 @@ from shared.observability.metrics import (
 )
 from shared.streams.constants import StreamName
 
+from data_ingestion.services.stream_monitor import record_device
+
 logger = get_logger(__name__)
 
 
@@ -31,7 +33,7 @@ async def process(
     Args:
         reading: The validated TelemetryReading model.
         redis_client: The shared async Redis client.
-        protocol: The ingestion protocol (``mqtt`` or ``http``).
+        protocol: The ingestion protocol (``mqtt``, ``coap`` or ``http``).
         stream_max_len: Maximum length of the Redis Stream before trimming.
 
     Returns:
@@ -44,6 +46,8 @@ async def process(
         device_type=reading.device_type,
         protocol=protocol,
     ).inc()
+
+    record_device(str(reading.device_id), reading.device_type)
 
     # Serialize the reading to a flat dict suitable for XADD
     stream_data = reading.to_stream_dict()

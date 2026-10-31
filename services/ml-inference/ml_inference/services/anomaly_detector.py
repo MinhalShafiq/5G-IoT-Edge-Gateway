@@ -5,7 +5,7 @@ and publishes alerts to the alerts stream when anomalies are detected.
 """
 
 import asyncio
-import math
+import time
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from shared.observability.metrics import (
     ANOMALIES_DETECTED,
     STREAM_MESSAGES_CONSUMED,
     INFERENCE_LATENCY,
+    INFERENCE_BATCH_SIZE,
 )
 from shared.models.telemetry import TelemetryReading
 from shared.models.alert import Alert, AlertSeverity
@@ -31,7 +32,7 @@ class AnomalyDetector:
     """Background stream consumer that runs real-time anomaly detection.
 
     Reads batches of telemetry from Redis Streams, extracts features,
-    runs ONNX inference, and publishes alerts for anomalous readings.
+    runs batched ONNX inference, and publishes alerts for anomalous readings.
     """
 
     def __init__(
@@ -50,9 +51,8 @@ class AnomalyDetector:
     async def run(self) -> None:
         """Main loop: read from raw_telemetry stream, run inference, publish alerts.
 
-        This method runs indefinitely until stop() is called. It processes
-        messages in batches, extracts features per reading, runs inference,
-        and publishes alerts to the alerts stream for any anomalous readings.
+        Runs until stop() is called. Each iteration reads up to ``batch_size``
+        entries and scores them with a single ONNX Runtime call.
         """
         logger.info(
             "anomaly_detector_started",
@@ -68,13 +68,11 @@ class AnomalyDetector:
                     ConsumerGroup.ML_INFERENCE,
                     self._settings.consumer_name,
                     count=self._settings.batch_size,
+                    block_ms=1000,
                 )
 
-                if not entries:
-                    continue
-
-                for entry_id, data in entries:
-                    await self._process_entry(entry_id, data)
+                if entries:
+                    await self._process_batch(entries)
 
             except asyncio.CancelledError:
                 logger.info("anomaly_detector_cancelled")
@@ -83,76 +81,70 @@ class AnomalyDetector:
                 logger.error("anomaly_detector_loop_error", error=str(e))
                 await asyncio.sleep(1)
 
-    async def _process_entry(self, entry_id: str, data: dict) -> None:
-        """Process a single stream entry: extract features, infer, and alert."""
-        try:
-            reading = TelemetryReading.from_stream_dict(data)
-            features = self._extractor.extract(reading)
+    async def _process_batch(self, entries: list[tuple[str, dict]]) -> None:
+        """Extract features, score the batch, then publish alerts and ack in one round trip."""
+        entry_ids = [entry_id for entry_id, _ in entries]
+        readings: list[TelemetryReading] = []
+        rows: list[list[float]] = []
 
-            import time
+        for entry_id, data in entries:
+            try:
+                reading = TelemetryReading.from_stream_dict(data)
+                rows.append(self._extractor.extract_row(reading))
+                readings.append(reading)
+            except Exception as e:
+                # Malformed entries are acked with the rest of the batch;
+                # in production, consider a dead-letter stream instead.
+                logger.error("invalid_stream_entry", entry_id=entry_id, error=str(e))
 
+        pipe = self._redis.redis.pipeline(transaction=False)
+
+        if readings:
             start = time.perf_counter()
-            score = self._engine.predict(features)
-            latency = time.perf_counter() - start
-
+            scores = self._engine.score(np.asarray(rows, dtype=np.float32))
             INFERENCE_LATENCY.labels(
-                model_name=self._engine._model_name or "default"
-            ).observe(latency)
+                model_name=self._engine.model_name or "default"
+            ).observe(time.perf_counter() - start)
+            INFERENCE_BATCH_SIZE.observe(len(readings))
 
-            # IsolationForest decision scores: positive = normal, negative = anomaly
-            raw = float(np.asarray(score).flat[0])
-            # Sigmoid to map to [0, 1]: negative scores → high anomaly score
-            anomaly_score = 1.0 / (1.0 + math.exp(40.0 * raw))
-            anomaly_score = max(0.0, min(1.0, anomaly_score))
+            threshold = self._settings.anomaly_threshold
+            for reading, score in zip(readings, scores.tolist()):
+                if score <= threshold:
+                    continue
 
-            if anomaly_score > self._settings.anomaly_threshold:
                 severity = (
-                    AlertSeverity.CRITICAL
-                    if anomaly_score > 0.9
-                    else AlertSeverity.WARNING
+                    AlertSeverity.CRITICAL if score > 0.9 else AlertSeverity.WARNING
                 )
-
                 alert = Alert(
                     device_id=reading.device_id,
-                    anomaly_score=anomaly_score,
-                    model_version=self._engine._model_version,
+                    anomaly_score=score,
+                    model_version=self._engine.model_version,
                     severity=severity,
                     details={"reading": reading.payload},
                 )
-
-                await self._redis.stream_add(
-                    StreamName.ALERTS, alert.to_stream_dict()
+                pipe.xadd(
+                    StreamName.ALERTS,
+                    alert.to_stream_dict(),
+                    maxlen=self._settings.alerts_stream_max_len,
+                    approximate=True,
                 )
-
                 ANOMALIES_DETECTED.labels(
-                    device_type=reading.device_type, severity=alert.severity
+                    device_type=reading.device_type, severity=alert.severity.value
                 ).inc()
-
-                logger.info(
+                logger.debug(
                     "anomaly_detected",
                     device_id=str(reading.device_id),
-                    score=anomaly_score,
+                    score=score,
                     severity=severity,
                 )
 
-            await self._redis.stream_ack(
-                StreamName.RAW_TELEMETRY, ConsumerGroup.ML_INFERENCE, entry_id
-            )
-            STREAM_MESSAGES_CONSUMED.labels(
-                stream=StreamName.RAW_TELEMETRY,
-                consumer_group=ConsumerGroup.ML_INFERENCE,
-            ).inc()
+        pipe.xack(StreamName.RAW_TELEMETRY, ConsumerGroup.ML_INFERENCE, *entry_ids)
+        await pipe.execute()
 
-        except Exception as e:
-            logger.error("inference_error", entry_id=entry_id, error=str(e))
-            # Acknowledge the message even on error to prevent infinite reprocessing.
-            # In production, consider a dead-letter queue instead.
-            try:
-                await self._redis.stream_ack(
-                    StreamName.RAW_TELEMETRY, ConsumerGroup.ML_INFERENCE, entry_id
-                )
-            except Exception:
-                pass
+        STREAM_MESSAGES_CONSUMED.labels(
+            stream=StreamName.RAW_TELEMETRY,
+            consumer_group=ConsumerGroup.ML_INFERENCE,
+        ).inc(len(entry_ids))
 
     def stop(self) -> None:
         """Signal the consumer loop to stop."""

@@ -1,5 +1,26 @@
 # 5G IoT Edge Gateway
 
+An edge IoT gateway built with FastAPI, MQTT, CoAP and Redis Streams. Simulated devices publish telemetry over MQTT, CoAP or HTTP; a PyTorch autoencoder served on ONNX Runtime flags anomalies in real time; Prometheus and Grafana monitor the whole pipeline.
+
+## Results
+
+Measured on a single machine with Docker Compose, 10,000 simulated devices over MQTT (one reading every 5 s each):
+
+![Grafana IoT Gateway Overview at 10,000 devices](docs/images/grafana-overview.png)
+
+| Metric | Result |
+|---|---|
+| Active devices | 10,000 |
+| Ingest rate | ~2,000 readings/s, every reading scored by the ML service |
+| Consumer lag (ml_inference, data_persistence) | 0 |
+| Ingestion latency per reading | p50 0.24 ms, p99 0.92 ms |
+| ONNX Runtime latency per scoring batch | p50 0.06 ms, p99 0.24 ms |
+| Alert precision (live, vs. simulator ground truth) | 99.99% (1 false alert out of 88,673) |
+| Anomaly recall (live) | 79.6% (pressure and vibration 100%) |
+| Test suite | 15 passed, 1 skipped (needs cloud-api, not in the Compose stack) |
+
+Recall is limited by temperature sensors: the simulator's "stuck" and "drift" temperature anomalies stay inside the normal range, so a single-reading detector can only catch spikes (see [Anomaly Detection Model](#anomaly-detection-model)).
+
 ## Prerequisites
 
 - **Docker** 24+ with Docker Compose v2
@@ -57,17 +78,19 @@ docker compose down -v                   # also removes data volumes
 
 The dashboard is a single-page control panel for the entire system.
 
+![Web control panel with 10,000 simulated devices](docs/images/control-panel.png)
+
 ### Stats Row
 
 Four counters at the top update in real time:
-- **Telemetry Readings** — total messages in the raw_telemetry Redis Stream
-- **Anomalies Detected** — total entries in the alerts stream
-- **Readings / sec** — current throughput
+- **Readings in Stream** — entries currently held in the raw_telemetry Redis Stream (capped at ~100k)
+- **Alerts in Stream** — entries currently held in the alerts stream (capped at ~100k)
+- **Readings / sec** — arrival rate, from the stream's entries-added counter
 - **Services Running** — number of healthy containers
 
 ### Live Telemetry Feed
 
-The left panel shows a scrolling feed of telemetry readings as they arrive from the simulator. Each entry shows the timestamp, device type, device ID, and sensor payload. A green left border indicates normal readings.
+The left panel shows a scrolling feed of the newest telemetry readings (the 50 most recent every 2 seconds, so it keeps up at any rate). Each entry shows the timestamp, device type, device ID, and sensor payload. A green left border indicates normal readings.
 
 ### Anomaly Alerts
 
@@ -99,7 +122,7 @@ Configure and launch the IoT device fleet simulator:
 
 | Parameter    | Default | Description                                    |
 |--------------|---------|------------------------------------------------|
-| Devices      | 50      | Number of simulated IoT sensors (max 10,000)   |
+| Devices      | 50      | Number of simulated IoT sensors (tested at 10,000) |
 | Interval (s) | 2       | Seconds between readings per device             |
 | Anomaly Rate | 0.10    | Fraction of readings that are anomalous (0-1)   |
 
@@ -131,21 +154,22 @@ Results (pass/fail, full output) appear inline. The first run may take longer as
 | **Grafana**         | http://localhost:3000      | Monitoring dashboards (admin / admin)      |
 | **Prometheus**      | http://localhost:9090      | Metrics store                              |
 | **Data Ingestion**  | http://localhost:8001      | Telemetry API (MQTT + HTTP)                |
+| **CoAP Ingestion**  | coap://localhost:5683/telemetry (UDP) | CoAP POST/PUT, JSON or CBOR      |
 | **API Docs**        | http://localhost:8001/docs | Swagger UI for the ingestion API           |
-| **ML Inference**    | (internal, port 8004)      | ONNX anomaly detection (no host port)      |
+| **ML Inference**    | (internal, port 8004)      | PyTorch autoencoder on ONNX Runtime (no host port) |
 
 ---
 
 ## Architecture Overview
 
 ```
-Simulator (MQTT)
+Simulator (MQTT / CoAP / HTTP)
     |
     v
-Mosquitto (MQTT Broker)
+Mosquitto (MQTT Broker) / CoAP :5683 / HTTP :8001
     |
     v
-Data Ingestion ──> Redis Stream (raw_telemetry) ──> ML Inference (ONNX)
+Data Ingestion ──> Redis Stream (raw_telemetry) ──> ML Inference (PyTorch autoencoder on ONNX Runtime)
                        |                                  |
                        v                                  v
                   Data Persistence              Redis Stream (alerts)
@@ -159,16 +183,45 @@ Data Ingestion ──> Redis Stream (raw_telemetry) ──> ML Inference (ONNX)
 
 ## Grafana Monitoring (http://localhost:3000)
 
-Login: `admin` / `admin`
+Login: `admin` / `admin` (see the screenshot under [Results](#results))
 
 Pre-configured with:
 - **Prometheus** datasource (auto-provisioned)
 - **IoT Gateway Overview** dashboard with panels for:
-  - Telemetry ingestion rate per device type and protocol
-  - Active devices count
-  - Anomalies detected
-  - ML inference latency
-  - Redis stream lengths and throughput
+  - Active devices, ingest rate, ML scored rate, anomalies (stat row)
+  - Telemetry ingestion rate per protocol (MQTT / CoAP / HTTP)
+  - Active devices per type
+  - Ingested vs consumed throughput per consumer group, and consumer-group lag (groups no consumer has joined, such as `alert_handler` without the coordination service, are left out)
+  - Anomalies per device type and severity
+  - Redis stream lengths
+  - Ingestion latency and ML inference latency/batch size
+
+---
+
+## Anomaly Detection Model
+
+The ml-inference image trains its model at build time (`services/ml-inference/Dockerfile`, stage `trainer`):
+
+1. Generates 90k labelled readings with the simulator's own device classes (5% anomalies).
+2. Trains the PyTorch `Autoencoder` (`services/ml-training/ml_training/architectures/autoencoder.py`) on normal readings only.
+3. Calibrates the reconstruction-error threshold for best F1 on a held-out split.
+4. Exports to ONNX, checks ONNX Runtime output against PyTorch, and writes `anomaly-autoencoder-v1.0.0.onnx` plus a `.json` sidecar (feature stats, threshold, test metrics).
+
+The runtime image has ONNX Runtime only, without torch. The build log prints held-out precision/recall per device type; you can also read them inside the container:
+
+```bash
+docker compose exec ml-inference cat /app/model_store/anomaly-autoencoder-v1.0.0.json
+```
+
+To retrain locally: `bash scripts/train-baseline-model.sh`.
+
+---
+
+## Simulating Over CoAP
+
+```bash
+SIM_TRANSPORT=coap docker compose --profile simulate up -d simulator
+```
 
 ---
 
@@ -204,9 +257,10 @@ iot-edge-gateway/
 ├── .env.example            # Environment variable template
 ├── dashboard/              # Web UI (port 9000)
 ├── services/
-│   ├── data-ingestion/     # MQTT + HTTP telemetry ingestion
+│   ├── data-ingestion/     # MQTT + CoAP + HTTP telemetry ingestion
 │   ├── data-persistence/   # Redis -> PostgreSQL writer
-│   └── ml-inference/       # ONNX Runtime anomaly detection
+│   ├── ml-inference/       # ONNX Runtime anomaly detection (model trained at image build)
+│   └── ml-training/        # PyTorch architectures + edge model training script
 ├── simulator/              # IoT device fleet simulator
 ├── shared/                 # Shared models, Redis client, observability
 ├── monitoring/

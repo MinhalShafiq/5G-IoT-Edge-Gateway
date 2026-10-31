@@ -9,7 +9,6 @@ import glob
 from pathlib import Path
 
 import httpx
-import numpy as np
 
 from shared.observability.logging_config import get_logger
 
@@ -20,10 +19,10 @@ logger = get_logger(__name__)
 
 
 def load_initial_model(engine: InferenceEngine, settings: Settings) -> None:
-    """Load the most recent .onnx model from the model directory.
+    """Load the most recent .onnx model (and its .json sidecar) from the model directory.
 
-    If no model files exist, generates a baseline IsolationForest model
-    so the service can start and run inference immediately.
+    The image build trains the PyTorch autoencoder and places it in
+    ``model_dir``, so a missing model is a deployment error.
 
     Args:
         engine: The inference engine to load the model into.
@@ -39,84 +38,12 @@ def load_initial_model(engine: InferenceEngine, settings: Settings) -> None:
     )
 
     if not onnx_files:
-        logger.warning("no_onnx_models_found", model_dir=model_dir)
-        logger.info("generating_baseline_model")
-        baseline_path = generate_baseline_model(model_dir)
-        if baseline_path:
-            onnx_files = [baseline_path]
-        else:
-            logger.error("baseline_model_generation_failed")
-            return
+        logger.error("no_onnx_models_found", model_dir=model_dir)
+        return
 
     model_path = onnx_files[0]
-    model_name = Path(model_path).stem
-    logger.info("loading_initial_model", path=model_path, name=model_name)
-    engine.load_model(model_path, model_name=model_name, model_version="1.0.0")
-
-
-def generate_baseline_model(model_dir: str) -> str | None:
-    """Train a simple IsolationForest and export to ONNX as a fallback model.
-
-    This creates a baseline anomaly detector trained on synthetic normal
-    sensor data so the service can function even without a pre-trained model.
-
-    Args:
-        model_dir: Directory to save the generated .onnx file.
-
-    Returns:
-        Path to the generated model file, or None on failure.
-    """
-    try:
-        from sklearn.ensemble import IsolationForest
-        from skl2onnx import to_onnx
-
-        n_features = 8
-        rng = np.random.RandomState(42)
-
-        # Generate synthetic "normal" data matching the feature extractor output.
-        # The extractor produces: [val1, val2, win_mean, win_std, win_min, win_max, pad, pad]
-        # Window stats are computed over sensor values only (excludes anomaly flag/bools).
-        def _gen(n, v1_range, v2_range):
-            v1 = rng.uniform(*v1_range, size=(n, 1))
-            v2 = rng.uniform(*v2_range, size=(n, 1))
-            win_mean = (v1 + v2) / 2.0
-            win_std = np.abs(v1 - v2) / 2.0 * (0.8 + 0.4 * rng.rand(n, 1))
-            win_min = np.minimum(v1, v2) - rng.rand(n, 1) * 0.5
-            win_max = np.maximum(v1, v2) + rng.rand(n, 1) * 0.5
-            pad = np.zeros((n, 2))
-            return np.hstack([v1, v2, win_mean, win_std, win_min, win_max, pad])
-
-        # Temperature: 18-28 °C, humidity: 40-60 %
-        temp = _gen(2000, (18.0, 28.0), (40.0, 60.0))
-        # Pressure: 1008-1018 hPa, flow: 10-50 L/min
-        pres = _gen(2000, (1008.0, 1018.0), (10.0, 50.0))
-        # Vibration: 0.5-2.0 mm/s, freq: 50-200 Hz
-        vib = _gen(1000, (0.5, 2.0), (50.0, 200.0))
-
-        normal_data = np.vstack([temp, pres, vib])
-        rng.shuffle(normal_data)
-
-        model = IsolationForest(
-            contamination=0.05, random_state=42, n_estimators=100
-        )
-        model.fit(normal_data)
-
-        onx = to_onnx(
-            model,
-            normal_data[:1].astype(np.float32),
-            target_opset={"": 17, "ai.onnx.ml": 3},
-        )
-
-        output_path = os.path.join(model_dir, "baseline_anomaly_detector.onnx")
-        with open(output_path, "wb") as f:
-            f.write(onx.SerializeToString())
-
-        logger.info("baseline_model_generated", path=output_path)
-        return output_path
-
-    except Exception as e:
-        logger.error("baseline_model_generation_error", error=str(e))
-        return None
+    logger.info("loading_initial_model", path=model_path)
+    engine.load_model(model_path)
 
 
 async def check_for_updates(registry_url: str) -> dict | None:
@@ -189,11 +116,7 @@ def hot_swap(engine: InferenceEngine, new_model_path: str) -> None:
         )
         # If validation passes, load into the engine
         del test_session
-        engine.load_model(
-            new_model_path,
-            model_name=model_name,
-            model_version=_extract_version(new_model_path),
-        )
+        engine.load_model(new_model_path)
         logger.info("hot_swap_complete", model=model_name)
     except Exception as e:
         logger.error(
@@ -232,6 +155,8 @@ async def check_and_download(registry_url: str, model_dir: str) -> str | None:
         logger.info("model_already_exists", path=target_path)
         return None
 
+    metadata_url = latest.get("metadata_url") or download_url.rsplit(".onnx", 1)[0] + ".json"
+    await download_model(metadata_url, target_path.rsplit(".onnx", 1)[0] + ".json")
     return await download_model(download_url, target_path)
 
 
@@ -252,16 +177,3 @@ async def list_available(registry_url: str) -> list[dict]:
         if isinstance(data, list):
             return data
         return data.get("models", [])
-
-
-def _extract_version(model_path: str) -> str:
-    """Try to extract a version string from the model filename.
-
-    Looks for patterns like 'model_v1.2.3.onnx'.
-    Falls back to '1.0.0' if no version is found.
-    """
-    name = Path(model_path).stem
-    parts = name.split("_v")
-    if len(parts) > 1:
-        return parts[-1]
-    return "1.0.0"

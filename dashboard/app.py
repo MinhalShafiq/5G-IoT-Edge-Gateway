@@ -66,7 +66,7 @@ def _compose_test_cmd(*args: str) -> list[str]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 # ── Service Status ──────────────────────────────────────────────────────────
@@ -354,54 +354,71 @@ async def ws_status(websocket: WebSocket):
 
 @app.websocket("/ws/live")
 async def ws_live(websocket: WebSocket):
-    """Push live telemetry and alerts every 2 seconds."""
+    """Push the newest telemetry and alerts every 2 seconds.
+
+    Only the newest 50 entries per stream are sent: at thousands of readings
+    per second, paging forward from the last-seen ID would fall further behind
+    every tick. The true arrival rate comes from the stream's entries-added
+    counter instead of the number of entries sent.
+    """
     await websocket.accept()
-    last_telemetry_id = "$"
-    last_alert_id = "$"
+    r = await _get_redis()
     try:
-        r = await _get_redis()
-        # Get initial latest IDs
-        tinfo = await r.xinfo_stream("raw_telemetry")
-        last_telemetry_id = tinfo.get("last-generated-id", "$")
-        try:
-            ainfo = await r.xinfo_stream("alerts")
-            last_alert_id = ainfo.get("last-generated-id", "$")
-        except Exception:
-            last_alert_id = "0-0"
+        last_telemetry_id = "0-0"
+        last_alert_id = "0-0"
+        last_added = None
+        last_tick = None
 
         while True:
             readings = []
             alerts = []
+            rate = 0.0
 
-            # Read new telemetry since last seen
-            tentries = await r.xrange("raw_telemetry", min=f"({last_telemetry_id}", count=50)
-            for eid, data in tentries:
-                readings.append({"id": eid, **data})
-                last_telemetry_id = eid
+            tentries = await r.xrevrange("raw_telemetry", count=50)
+            for eid, data in reversed(tentries):
+                if _stream_id_gt(eid, last_telemetry_id):
+                    readings.append({"id": eid, **data})
+            if tentries:
+                last_telemetry_id = tentries[0][0]
 
-            # Read new alerts since last seen
-            try:
-                aentries = await r.xrange("alerts", min=f"({last_alert_id}", count=50)
-                for eid, data in aentries:
+            aentries = await r.xrevrange("alerts", count=50)
+            for eid, data in reversed(aentries):
+                if _stream_id_gt(eid, last_alert_id):
                     alerts.append({"id": eid, **data})
-                    last_alert_id = eid
-            except Exception:
-                pass
+            if aentries:
+                last_alert_id = aentries[0][0]
 
             tlen = await r.xlen("raw_telemetry")
             alen = await r.xlen("alerts")
+
+            try:
+                added = (await r.xinfo_stream("raw_telemetry"))["entries-added"]
+                now = asyncio.get_running_loop().time()
+                if last_added is not None:
+                    rate = (added - last_added) / (now - last_tick)
+                last_added, last_tick = added, now
+            except Exception:
+                pass
 
             await websocket.send_json({
                 "readings": readings,
                 "alerts": alerts,
                 "stream_length": tlen,
                 "alert_count": alen,
+                "rate": round(rate, 1),
             })
             await asyncio.sleep(2)
-
-        await r.aclose()
     except (WebSocketDisconnect, Exception):
         pass
+    finally:
+        await r.aclose()
+
+
+def _stream_id_gt(a: str, b: str) -> bool:
+    """Compare two Redis stream IDs ("ms-seq")."""
+    a_ms, a_seq = a.split("-")
+    b_ms, b_seq = b.split("-")
+    return (int(a_ms), int(a_seq)) > (int(b_ms), int(b_seq))
 
 
 if __name__ == "__main__":

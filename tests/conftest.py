@@ -18,6 +18,10 @@ os.environ.setdefault("JWT_SECRET", "test-secret-key")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "e2e: requires the docker compose stack running")
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create a session-scoped event loop."""
@@ -37,13 +41,38 @@ async def redis_client():
     await client.close()
 
 
+async def _ensure_test_database(dsn: str) -> str:
+    """Return a DSN for ``<db>_test`` on the same server, creating it if needed.
+
+    Tests create and drop tables, so they must never touch the database the
+    running services write to.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    url = make_url(dsn)
+    test_db = f"{url.database}_test"
+    admin = create_async_engine(
+        url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    async with admin.connect() as conn:
+        exists = await conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": test_db}
+        )
+        if not exists:
+            await conn.execute(text(f'CREATE DATABASE "{test_db}"'))
+    await admin.dispose()
+    return url.set(database=test_db).render_as_string(hide_password=False)
+
+
 @pytest_asyncio.fixture
 async def db_session():
-    """Provide a test database session with automatic rollback."""
+    """Provide a session on a dedicated test database, dropping tables afterwards."""
     from shared.database.postgres import get_async_engine, Base
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    engine = get_async_engine(os.environ["POSTGRES_DSN"])
+    engine = get_async_engine(await _ensure_test_database(os.environ["POSTGRES_DSN"]))
 
     # Create all tables
     async with engine.begin() as conn:
@@ -55,7 +84,7 @@ async def db_session():
         yield session
         await session.rollback()
 
-    # Drop all tables after tests
+    # Drop all tables after tests (test database only)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 

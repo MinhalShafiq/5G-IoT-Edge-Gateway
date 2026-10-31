@@ -7,6 +7,7 @@ device fleet, and runs the publish loop until interrupted.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import signal
 import sys
@@ -35,7 +36,7 @@ structlog.configure(
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.dev.ConsoleRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(0),
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,

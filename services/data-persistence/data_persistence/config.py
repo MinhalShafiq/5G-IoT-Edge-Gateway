@@ -19,5 +19,8 @@ class Settings(BaseServiceSettings):
     # Consumer identity
     consumer_name: str = "persistence-worker-1"
 
+    # Prometheus /metrics endpoint (the worker has no other HTTP server)
+    metrics_port: int = 8002
+
 
 settings = Settings()

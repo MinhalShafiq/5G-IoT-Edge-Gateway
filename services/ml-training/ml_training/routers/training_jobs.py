@@ -21,7 +21,7 @@ router = APIRouter(prefix="/jobs", tags=["training-jobs"])
 class TrainingJobCreate(BaseModel):
     """Payload to start a new training job."""
 
-    model_type: str = "autoencoder"  # or "isolation_forest", "lstm"
+    model_type: str = "autoencoder"  # or "lstm"
     epochs: int = 50
     batch_size: int = 64
     learning_rate: float = 0.001

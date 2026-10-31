@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from uuid import uuid4
 
 from shared.database.redis_client import RedisClient
 from shared.database.postgres import get_async_engine, get_session_factory
@@ -19,7 +20,10 @@ logger = get_logger(__name__)
 
 def _telemetry_to_record(reading: TelemetryReading) -> TelemetryRecord:
     """Convert a TelemetryReading pydantic model to a TelemetryRecord ORM instance."""
+    # The column default only fires on an ORM flush; BatchWriter uses a Core
+    # insert with explicit values, so the id must be assigned here.
     return TelemetryRecord(
+        id=uuid4(),
         device_id=reading.device_id,
         device_type=reading.device_type,
         timestamp=reading.timestamp,

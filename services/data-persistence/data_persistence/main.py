@@ -7,6 +7,8 @@ from the raw_telemetry Redis Stream and batch-writes them to PostgreSQL.
 import asyncio
 import signal
 
+from prometheus_client import start_http_server
+
 from data_persistence.config import settings
 from shared.observability.logging_config import setup_logging, get_logger
 from shared.database.redis_client import RedisClient
@@ -39,6 +41,9 @@ async def main() -> None:
         flush_interval=settings.flush_interval_seconds,
         consumer=settings.consumer_name,
     )
+
+    # --- Metrics ---
+    start_http_server(settings.metrics_port)
 
     # --- Redis ---
     redis_client = RedisClient(

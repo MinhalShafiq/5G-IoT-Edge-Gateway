@@ -8,6 +8,11 @@ scrape_configs:
       - targets: ["data-ingestion:8001"]
     metrics_path: /metrics
 
+  - job_name: "data-persistence"
+    static_configs:
+      - targets: ["data-persistence:8002"]
+    metrics_path: /metrics
+
   - job_name: "ml-inference"
     static_configs:
       - targets: ["ml-inference:8004"]

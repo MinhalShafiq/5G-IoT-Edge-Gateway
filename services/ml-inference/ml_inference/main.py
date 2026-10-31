@@ -44,11 +44,14 @@ async def lifespan(app: FastAPI):
     # Initialize the ONNX inference engine
     engine = InferenceEngine()
 
-    # Load the initial model (or generate a baseline if none exists)
+    # Load the PyTorch-trained autoencoder baked into the image
     model_manager.load_initial_model(engine, settings)
 
-    # Initialize feature extractor
-    feature_extractor = FeatureExtractor(window_size=settings.feature_window_size)
+    # Feature normalisation must match what the model was trained with
+    feature_extractor = FeatureExtractor(
+        window_size=settings.feature_window_size,
+        feature_stats=engine.metadata.get("feature_stats"),
+    )
 
     # Ensure the consumer group exists on the raw_telemetry stream
     await redis_client.ensure_consumer_group(

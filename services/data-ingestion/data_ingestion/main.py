@@ -1,6 +1,6 @@
 """Data Ingestion service — FastAPI application entry point.
 
-Subscribes to MQTT topics, receives telemetry from IoT devices,
+Receives telemetry from IoT devices over MQTT, CoAP and HTTP,
 and publishes to Redis Streams for downstream processing.
 """
 
@@ -19,8 +19,10 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
 
 from data_ingestion.config import Settings
+from data_ingestion.routers.coap_server import create_coap_server
 from data_ingestion.routers.ingest import router as ingest_router
 from data_ingestion.services.mqtt_subscriber import MQTTSubscriber
+from data_ingestion.services.stream_monitor import run_stream_monitor
 
 logger = get_logger(__name__)
 
@@ -81,6 +83,13 @@ async def lifespan(app: FastAPI):
     mqtt_task = asyncio.create_task(mqtt_subscriber.run())
     app.state.mqtt_task = mqtt_task
 
+    # Start the CoAP server (UDP) alongside HTTP and MQTT
+    coap_context = await create_coap_server(settings, redis_client)
+    app.state.coap_context = coap_context
+
+    # Publish stream length / consumer lag / active device gauges
+    monitor_task = asyncio.create_task(run_stream_monitor(redis_client))
+
     logger.info("data_ingestion_service_started")
 
     yield
@@ -95,6 +104,9 @@ async def lifespan(app: FastAPI):
         await mqtt_task
     except asyncio.CancelledError:
         pass
+
+    monitor_task.cancel()
+    await coap_context.shutdown()
 
     # Close Redis connection
     await redis_client.close()

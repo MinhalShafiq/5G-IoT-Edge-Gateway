@@ -1,106 +1,84 @@
-"""CoAP transport — publishes telemetry via CoAP PUT to the data-ingestion service."""
+"""CoAP transport — publishes telemetry via CoAP POST to the data-ingestion service."""
 
+import asyncio
 import json
 import logging
-import asyncio
+import threading
+
+import aiocoap
 
 logger = logging.getLogger(__name__)
+
+# How many CoAP requests may be in flight at once. aiocoap handles
+# retransmission; this only bounds memory and socket pressure.
+_MAX_IN_FLIGHT = 256
+_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 class CoapPublisher:
     """Publishes telemetry readings via CoAP.
 
-    Uses aiocoap for async CoAP client operations.
-    Falls back to a no-op if aiocoap is not installed.
+    ``publish`` is called from worker threads (the fleet manager offloads it
+    with ``run_in_executor``), while aiocoap needs a single long-lived event
+    loop. The publisher owns that loop on a dedicated background thread and
+    submits each request to it with ``run_coroutine_threadsafe``.
     """
 
     def __init__(self, base_uri: str = "coap://localhost:5683"):
-        self._base_uri = base_uri.rstrip("/")
-        self._endpoint = f"{self._base_uri}/telemetry"
-        self._context = None
-        self._available = True
-
-        try:
-            import aiocoap  # noqa: F401
-        except ImportError:
-            logger.warning(
-                "aiocoap not installed — CoAP transport will be unavailable. "
-                "Install with: pip install aiocoap"
-            )
-            self._available = False
+        self._endpoint = f"{base_uri.rstrip('/')}/telemetry"
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, name="coap-loop", daemon=True
+        )
+        self._context: aiocoap.Context | None = None
+        self._semaphore: asyncio.Semaphore | None = None
 
     def connect(self, host: str | None = None, port: int | None = None) -> None:
-        """Configure the CoAP target."""
+        """Start the event loop thread and create the CoAP client context."""
         if host and port:
-            self._base_uri = f"coap://{host}:{port}"
-            self._endpoint = f"{self._base_uri}/telemetry"
+            self._endpoint = f"coap://{host}:{port}/telemetry"
+        self._thread.start()
+        asyncio.run_coroutine_threadsafe(self._init(), self._loop).result()
         logger.info("CoAP publisher configured: %s", self._endpoint)
 
+    async def _init(self) -> None:
+        self._context = await aiocoap.Context.create_client_context()
+        self._semaphore = asyncio.Semaphore(_MAX_IN_FLIGHT)
+
     def publish(self, device_id: str, telemetry: dict) -> bool:
-        """Send a telemetry reading via CoAP POST (synchronous wrapper)."""
-        if not self._available:
-            logger.warning("CoAP not available, skipping publish for %s", device_id)
+        """Send a telemetry reading via CoAP POST, blocking until acknowledged."""
+        future = asyncio.run_coroutine_threadsafe(
+            self._async_publish(device_id, telemetry), self._loop
+        )
+        try:
+            return future.result(timeout=_REQUEST_TIMEOUT_SECONDS + 1)
+        except Exception as e:
+            logger.error("CoAP publish failed for %s: %s", device_id, e)
             return False
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Schedule in the existing loop
-                future = asyncio.ensure_future(
-                    self._async_publish(device_id, telemetry)
-                )
-                # Can't block here; fire-and-forget in async context
-                return True
-            else:
-                return loop.run_until_complete(
-                    self._async_publish(device_id, telemetry)
-                )
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(
-                self._async_publish(device_id, telemetry)
-            )
-            loop.close()
-            return result
-
     async def _async_publish(self, device_id: str, telemetry: dict) -> bool:
-        """Async CoAP POST."""
-        import aiocoap
-
-        payload = json.dumps(telemetry).encode("utf-8")
         request = aiocoap.Message(
             code=aiocoap.POST,
             uri=self._endpoint,
-            payload=payload,
+            payload=json.dumps(telemetry).encode("utf-8"),
+            content_format=50,  # application/json
         )
-        request.opt.content_format = 50  # application/json
-
-        try:
-            if self._context is None:
-                self._context = await aiocoap.Context.create_client_context()
-
-            response = await self._context.request(request).response
-
-            if response.code.is_successful():
-                return True
-
-            logger.warning(
-                "CoAP error for device %s: %s", device_id, response.code
+        async with self._semaphore:
+            response = await asyncio.wait_for(
+                self._context.request(request).response, _REQUEST_TIMEOUT_SECONDS
             )
-            return False
-        except Exception as e:
-            logger.error("CoAP publish failed for %s: %s", device_id, e)
-            self._context = None  # Reset context on error
-            return False
+        if response.code.is_successful():
+            return True
+        logger.warning("CoAP error for device %s: %s", device_id, response.code)
+        return False
 
     def disconnect(self) -> None:
-        """Clean up CoAP context."""
+        """Shut down the CoAP context and stop the loop thread."""
         if self._context is not None:
-            try:
-                loop = asyncio.get_event_loop()
-                if not loop.is_running():
-                    loop.run_until_complete(self._context.shutdown())
-            except Exception:
-                pass
+            asyncio.run_coroutine_threadsafe(
+                self._context.shutdown(), self._loop
+            ).result(timeout=5)
             self._context = None
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=5)
         logger.info("CoAP publisher disconnected")

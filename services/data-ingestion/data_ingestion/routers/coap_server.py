@@ -1,6 +1,7 @@
+"""CoAP server — UDP telemetry ingestion for constrained devices (RFC 7252)."""
+
 import aiocoap
 import aiocoap.resource as resource
-import json
 from shared.models.telemetry import TelemetryReading
 from shared.observability.logging_config import get_logger
 from data_ingestion.services import ingestion_service
@@ -43,13 +44,17 @@ class TelemetryResource(resource.Resource):
 
             reading = TelemetryReading(**data)
 
-            logger.info(
-                "CoAP telemetry received",
+            logger.debug(
+                "coap_telemetry_received",
                 device_id=str(reading.device_id),
-                protocol="coap",
             )
 
-            await ingestion_service.process(reading, self.redis_client, self.settings)
+            await ingestion_service.process(
+                reading=reading,
+                redis_client=self.redis_client,
+                protocol="coap",
+                stream_max_len=self.settings.stream_max_len,
+            )
 
             return aiocoap.Message(
                 code=aiocoap.numbers.codes.Code.CREATED,
@@ -57,7 +62,7 @@ class TelemetryResource(resource.Resource):
             )
 
         except Exception as e:
-            logger.error("CoAP telemetry processing error", error=str(e))
+            logger.warning("coap_telemetry_rejected", error=str(e))
             return aiocoap.Message(
                 code=aiocoap.numbers.codes.Code.BAD_REQUEST,
                 payload=str(e).encode("utf-8"),
@@ -90,7 +95,7 @@ async def create_coap_server(settings, redis_client):
     )
 
     bind_address = ("::", settings.coap_port)
-    logger.info("Starting CoAP server", bind=bind_address)
+    logger.info("coap_server_starting", bind=bind_address)
 
     context = await aiocoap.Context.create_server_context(root, bind=bind_address)
     return context

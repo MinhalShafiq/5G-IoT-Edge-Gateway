@@ -25,7 +25,7 @@ class TestAnomalyDetectionFlow:
             device_id=uuid4(),
             anomaly_score=0.95,
             severity=AlertSeverity.CRITICAL,
-            model_version="isolation-forest-v1",
+            model_version="anomaly-autoencoder-1.0.0",
             details={"temperature": 95.3, "expected_range": [18.0, 35.0]},
         )
 

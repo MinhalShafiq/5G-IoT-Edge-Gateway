@@ -7,6 +7,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
+# CPU-only torch first, so ml-training's dependency doesn't pull the multi-GB CUDA build
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+
 # Install shared library
 COPY shared/ /app/shared/
 RUN pip install --no-cache-dir /app/shared/

@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -8,93 +10,337 @@
   "liveNow": false,
   "panels": [
     {
-      "title": "Telemetry Ingestion Rate",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "targets": [
-        {
-          "expr": "rate(telemetry_received_total[5m])",
-          "legendFormat": "{{device_type}} ({{protocol}})"
-        }
-      ]
-    },
-    {
       "title": "Active Devices",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "sum(active_devices)",
-          "legendFormat": "Total"
+          "legendFormat": "Active Devices"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
     },
     {
-      "title": "Anomalies Detected",
+      "title": "Ingest Rate",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(telemetry_received_total[1m]))",
+          "legendFormat": "Ingest Rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "ML Scored Rate",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(stream_messages_consumed_total{consumer_group=\"ml_inference\"}[1m]))",
+          "legendFormat": "ML Scored Rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Anomalies (1h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "sum(increase(anomalies_detected_total[1h]))",
-          "legendFormat": "Last Hour"
+          "legendFormat": "Anomalies (1h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Telemetry Ingestion Rate by Protocol",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum by (protocol) (rate(telemetry_received_total[1m]))",
+          "legendFormat": "{{protocol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Active Devices by Type",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "active_devices",
+          "legendFormat": "{{device_type}}"
         }
       ]
     },
     {
-      "title": "Processing Latency (p99)",
+      "title": "Stream Throughput: Ingested vs Consumed",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(processing_latency_seconds_bucket[5m]))",
-          "legendFormat": "{{service}} - {{operation}}"
+          "expr": "sum(rate(stream_messages_published_total[1m]))",
+          "legendFormat": "published"
+        },
+        {
+          "expr": "sum by (consumer_group) (rate(stream_messages_consumed_total[1m]))",
+          "legendFormat": "consumed: {{consumer_group}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Consumer Group Lag (undelivered entries)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "redis_consumer_group_lag",
+          "legendFormat": "{{stream}} / {{consumer_group}}"
         }
       ]
     },
     {
-      "title": "ML Inference Latency (p99)",
+      "title": "Anomalies Detected per Second",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(inference_latency_seconds_bucket[5m]))",
-          "legendFormat": "{{model_name}}"
+          "expr": "sum by (device_type, severity) (rate(anomalies_detected_total[1m]))",
+          "legendFormat": "{{device_type}} {{severity}}"
         }
       ]
     },
     {
       "title": "Redis Stream Lengths",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
       "targets": [
         {
-          "expr": "stream_messages_published_total - stream_messages_consumed_total",
-          "legendFormat": "{{stream}} backlog"
+          "expr": "redis_stream_length",
+          "legendFormat": "{{stream}}"
         }
       ]
     },
     {
-      "title": "Stream Throughput",
+      "title": "Ingestion Latency (p50 / p99)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
       "targets": [
         {
-          "expr": "rate(stream_messages_published_total[5m])",
-          "legendFormat": "Published {{stream}}"
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(processing_latency_seconds_bucket[5m])))",
+          "legendFormat": "p50"
         },
         {
-          "expr": "rate(stream_messages_consumed_total[5m])",
-          "legendFormat": "Consumed {{stream}} ({{consumer_group}})"
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(processing_latency_seconds_bucket[5m])))",
+          "legendFormat": "p99"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "ML Inference Latency per Batch (p50 / p99)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(inference_latency_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(inference_latency_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "sum(rate(inference_batch_size_sum[5m])) / sum(rate(inference_batch_size_count[5m]))",
+          "legendFormat": "avg batch size"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg batch size"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["iot-gateway", "overview"],
-  "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "tags": [
+    "iot-gateway",
+    "overview"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "title": "IoT Gateway Overview",
   "uid": "iot-gateway-overview"
 }

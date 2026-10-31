@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# Train and export the baseline anomaly detection model (Isolation Forest -> ONNX).
-# Usage: bash scripts/train-baseline-model.sh
+# Train the PyTorch anomaly autoencoder and export it to ONNX.
+#
+# The ml-inference Docker image runs this automatically in its build stage;
+# use this script to retrain locally and inspect the metrics.
+# Requires: torch, onnxruntime, numpy, pydantic, structlog (see services/ml-inference/Dockerfile)
+# Usage: bash scripts/train-baseline-model.sh [output_dir]
 
 set -euo pipefail
 
-OUTPUT_DIR="services/ml-inference/ml_inference/model_store"
-MODEL_FILE="$OUTPUT_DIR/anomaly_detector.onnx"
+OUTPUT_DIR="${1:-model_store}"
 
-echo "=== Training Baseline Anomaly Detection Model ==="
+echo "=== Training PyTorch anomaly autoencoder ==="
 
-# Ensure output directory exists
-mkdir -p "$OUTPUT_DIR"
-
-# Train and export
-python -m ml_inference.models.isolation_forest \
-    --output "$MODEL_FILE" \
-    --samples 10000
+PYTHONPATH="shared:simulator:services/ml-inference:services/ml-training${PYTHONPATH:+:$PYTHONPATH}" \
+    python -m ml_training.training_scripts.train_edge_autoencoder --output-dir "$OUTPUT_DIR"
 
 echo ""
-echo "Model saved to: $MODEL_FILE"
-echo "Model size: $(du -h "$MODEL_FILE" | cut -f1)"
+echo "Model + metadata saved to: $OUTPUT_DIR"

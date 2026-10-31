@@ -1,6 +1,5 @@
 """Inference API routes for synchronous prediction requests."""
 
-import math
 import time
 from typing import Annotated
 
@@ -78,16 +77,11 @@ async def predict(
 
     start = time.perf_counter()
     features = extractor.extract(reading)
-    scores = engine.predict(features)
+    anomaly_score = float(engine.score(features)[0])
     elapsed_ms = (time.perf_counter() - start) * 1000
-
-    # IsolationForest decision scores: positive = normal, negative = anomaly
-    raw = float(np.asarray(scores).flat[0])
-    # Sigmoid to map to [0, 1]: negative scores → high anomaly score
-    anomaly_score = max(0.0, min(1.0, 1.0 / (1.0 + math.exp(40.0 * raw))))
     is_anomaly = anomaly_score > threshold
 
-    INFERENCE_LATENCY.labels(model_name=engine._model_name or "default").observe(
+    INFERENCE_LATENCY.labels(model_name=engine.model_name or "default").observe(
         elapsed_ms / 1000
     )
 
@@ -121,20 +115,16 @@ async def predict_batch(
     threshold = _get_threshold(request)
 
     start = time.perf_counter()
+    features = np.concatenate([extractor.extract(r) for r in readings])
+    scores = engine.score(features).tolist()
+    total_elapsed_ms = (time.perf_counter() - start) * 1000
+    per_item_ms = total_elapsed_ms / len(readings)
 
     predictions = []
-    for reading in readings:
-        item_start = time.perf_counter()
-        features = extractor.extract(reading)
-        scores = engine.predict(features)
-        item_elapsed_ms = (time.perf_counter() - item_start) * 1000
-
-        raw = float(np.asarray(scores).flat[0])
-        anomaly_score = max(0.0, min(1.0, 1.0 / (1.0 + math.exp(40.0 * raw))))
+    for reading, anomaly_score in zip(readings, scores):
         is_anomaly = anomaly_score > threshold
-
         _stats["inference_count"] += 1
-        _stats["total_latency_ms"] += item_elapsed_ms
+        _stats["total_latency_ms"] += per_item_ms
         if is_anomaly:
             _stats["anomaly_count"] += 1
 
@@ -143,13 +133,11 @@ async def predict_batch(
                 device_id=str(reading.device_id),
                 anomaly_score=anomaly_score,
                 is_anomaly=is_anomaly,
-                latency_ms=round(item_elapsed_ms, 3),
+                latency_ms=round(per_item_ms, 3),
             )
         )
 
-    total_elapsed_ms = (time.perf_counter() - start) * 1000
-
-    INFERENCE_LATENCY.labels(model_name=engine._model_name or "default").observe(
+    INFERENCE_LATENCY.labels(model_name=engine.model_name or "default").observe(
         total_elapsed_ms / 1000
     )
 
